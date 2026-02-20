@@ -1,43 +1,47 @@
 package com.example.service
 
-import com.example.domain.Role
-import com.example.domain.User
-import com.example.dto.AuthResponse
-import com.example.dto.LoginRequest
-import com.example.dto.RegisterRequest
-import com.example.repository.UserRepository
-import com.example.security.JwtService
-import com.example.utils.PasswordHasher
-import java.time.Instant
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
+import com.example.data.repository.UserRepository
+import com.example.module.AuthResponse
+import com.example.module.User
+import com.example.module.UserRole
+import java.util.*
 
 class AuthService(
     private val userRepository: UserRepository,
-    private val jwtService: JwtService
+    private val jwtSecret: String,
+    private val jwtIssuer: String,
+    private val jwtAudience: String
 ) {
-    suspend fun register(request: RegisterRequest): AuthResponse {
-        val existing = userRepository.findByEmail(request.email)
-        if (existing != null) {
-            throw IllegalArgumentException("User with this email already exists")
+
+    fun register(email: String, password: String): AuthResponse? {
+        // Проверяем, не существует ли уже пользователь
+        if (userRepository.findByEmail(email) != null) {
+            return null
         }
-        val passwordHash = PasswordHasher.hash(request.password)
-        val user = User(
-            username = request.username,
-            email = request.email,
-            passwordHash = passwordHash,
-            role = Role.USER
-        )
-        val created = userRepository.create(user)
-        val token = jwtService.generateToken(created.id!!, created.email, created.role.name)
-        return AuthResponse(token)
+
+        val user = userRepository.create(email, password, UserRole.USER) ?: return null
+        val token = generateToken(user)
+
+        return AuthResponse(token, user)
     }
 
-    suspend fun login(request: LoginRequest): AuthResponse {
-        val user = userRepository.findByEmail(request.email)
-            ?: throw IllegalArgumentException("Invalid email or password")
-        if (!PasswordHasher.verify(request.password, user.passwordHash)) {
-            throw IllegalArgumentException("Invalid email or password")
-        }
-        val token = jwtService.generateToken(user.id!!, user.email, user.role.name)
-        return AuthResponse(token)
+    fun login(email: String, password: String): AuthResponse? {
+        val user = userRepository.verifyPassword(email, password) ?: return null
+        val token = generateToken(user)
+
+        return AuthResponse(token, user)
+    }
+
+    private fun generateToken(user: User): String {
+        return JWT.create()
+            .withAudience(jwtAudience)
+            .withIssuer(jwtIssuer)
+            .withClaim("userId", user.id)
+            .withClaim("email", user.email)
+            .withClaim("role", user.role.name)
+            .withExpiresAt(Date(System.currentTimeMillis() + 24 * 60 * 60 * 1000)) // 24 часа
+            .sign(Algorithm.HMAC256(jwtSecret))
     }
 }

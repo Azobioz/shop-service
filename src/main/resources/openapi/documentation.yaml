@@ -1,63 +1,113 @@
 openapi: 3.0.0
 info:
-  title: Backend API
+  title: Online Shop API
+  description: Backend API для интернет-магазина с поддержкой авторизации, управления товарами и заказами
   version: 1.0.0
+  contact:
+    name: API Support
+    email: support@shop.com
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+
+tags:
+  - name: Auth
+    description: Аутентификация и регистрация
+  - name: Products
+    description: Управление товарами
+  - name: Orders
+    description: Управление заказами
+  - name: Admin
+    description: Административные функции
+
 paths:
   /auth/register:
     post:
-      summary: Register a new user
+      tags:
+        - Auth
+      summary: Регистрация нового пользователя
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RegisterRequest'
+              $ref: '#/components/schemas/UserCredentials'
       responses:
         '201':
-          description: Created
+          description: Успешная регистрация
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Невалидные данные
+        '409':
+          description: Пользователь уже существует
+
   /auth/login:
     post:
-      summary: Login user
+      tags:
+        - Auth
+      summary: Вход в систему
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: '#/components/schemas/UserCredentials'
       responses:
         '200':
-          description: OK
+          description: Успешный вход
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Неверные учетные данные
+
   /products:
     get:
-      summary: Get all products
-      parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-        - name: offset
-          in: query
-          schema:
-            type: integer
+      tags:
+        - Products
+      summary: Получить список всех товаров
       responses:
         '200':
-          description: OK
+          description: Список товаров
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ProductResponse'
+                  $ref: '#/components/schemas/Product'
+
+  /products/{id}:
+    get:
+      tags:
+        - Products
+      summary: Получить товар по ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Информация о товаре
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          description: Товар не найден
+
+  /orders:
     post:
-      summary: Create product (admin only)
+      tags:
+        - Orders
+      summary: Создать новый заказ
       security:
         - bearerAuth: []
       requestBody:
@@ -65,63 +115,346 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProductRequest'
+              $ref: '#/components/schemas/CreateOrderRequest'
       responses:
         '201':
-          description: Created
+          description: Заказ успешно создан
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProductResponse'
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: Невалидные данные или недостаточно товара
+        '401':
+          description: Требуется авторизация
+
+    get:
+      tags:
+        - Orders
+      summary: Получить список своих заказов
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список заказов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Order'
+        '401':
+          description: Требуется авторизация
+
+  /orders/{id}:
+    delete:
+      tags:
+        - Orders
+      summary: Отменить заказ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Заказ успешно отменен
+        '400':
+          description: Невозможно отменить заказ
+        '401':
+          description: Требуется авторизация
+
+  /admin/products:
+    post:
+      tags:
+        - Admin
+      summary: Добавить новый товар (только админ)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProductRequest'
+      responses:
+        '201':
+          description: Товар успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          description: Требуется авторизация
+        '403':
+          description: Доступ запрещен
+
+  /admin/products/{id}:
+    put:
+      tags:
+        - Admin
+      summary: Обновить товар (только админ)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProductRequest'
+      responses:
+        '200':
+          description: Товар обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          description: Товар не найден
+        '401':
+          description: Требуется авторизация
+        '403':
+          description: Доступ запрещен
+
+    delete:
+      tags:
+        - Admin
+      summary: Удалить товар (только админ)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Товар удален
+        '404':
+          description: Товар не найден
+        '401':
+          description: Требуется авторизация
+        '403':
+          description: Доступ запрещен
+
+  /admin/stats/orders:
+    get:
+      tags:
+        - Admin
+      summary: Получить статистику заказов (только админ)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Статистика заказов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+        '401':
+          description: Требуется авторизация
+        '403':
+          description: Доступ запрещен
+
 components:
-  schemas:
-    RegisterRequest:
-      type: object
-      properties:
-        username:
-          type: string
-        email:
-          type: string
-        password:
-          type: string
-    LoginRequest:
-      type: object
-      properties:
-        email:
-          type: string
-        password:
-          type: string
-    AuthResponse:
-      type: object
-      properties:
-        token:
-          type: string
-    ProductRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        description:
-          type: string
-        price:
-          type: number
-        stock:
-          type: integer
-    ProductResponse:
-      type: object
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-        description:
-          type: string
-        price:
-          type: number
-        stock:
-          type: integer
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+
+  schemas:
+    UserCredentials:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          format: password
+          minLength: 6
+          example: password123
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        role:
+          type: string
+          enum: [USER, ADMIN]
+          example: USER
+        createdAt:
+          type: string
+          format: date-time
+          example: 2024-01-01T12:00:00Z
+
+    Product:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: Ноутбук
+        description:
+          type: string
+          example: Игровой ноутбук с RTX 4060
+        price:
+          type: string
+          example: "99999.99"
+        stock:
+          type: integer
+          example: 10
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateProductRequest:
+      type: object
+      required:
+        - name
+        - description
+        - price
+        - stock
+      properties:
+        name:
+          type: string
+          example: Ноутбук
+        description:
+          type: string
+          example: Игровой ноутбук
+        price:
+          type: string
+          example: "99999.99"
+        stock:
+          type: integer
+          example: 10
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: string
+        stock:
+          type: integer
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        userId:
+          type: integer
+          format: int64
+          example: 1
+        status:
+          type: string
+          enum: [PENDING, COMPLETED, CANCELLED]
+          example: PENDING
+        totalPrice:
+          type: string
+          example: "199999.98"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        createdAt:
+          type: string
+          format: date-time
+
+    OrderItem:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        productId:
+          type: integer
+          format: int64
+        productName:
+          type: string
+        quantity:
+          type: integer
+        price:
+          type: string
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemRequest'
+
+    OrderItemRequest:
+      type: object
+      required:
+        - productId
+        - quantity
+      properties:
+        productId:
+          type: integer
+          format: int64
+          example: 1
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+
+    StatsResponse:
+      type: object
+      properties:
+        totalOrders:
+          type: integer
+          format: int64
+          example: 150
+        totalRevenue:
+          type: string
+          example: "1500000.00"

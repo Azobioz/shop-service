@@ -1,128 +1,135 @@
 package com.example.service
 
-import com.example.domain.*
-import com.example.dto.OrderItemResponse
-import com.example.dto.OrderRequest
-import com.example.dto.OrderResponse
-import com.example.messaging.OrderEventProducer
-import com.example.repository.AuditLogRepository
-import com.example.repository.OrderRepository
-import com.example.repository.ProductRepository
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.math.BigDecimal
+import com.example.data.repository.AuditLogRepository
+import com.example.data.repository.OrderRepository
+import com.example.data.repository.ProductRepository
+import com.example.kafka.KafkaProducer
+import com.example.kafka.OrderEvent
+import com.example.module.CreateOrderRequest
+import com.example.module.Order
+import org.jetbrains.exposed.sql.transactions.transaction
 
 class OrderService(
     private val orderRepository: OrderRepository,
     private val productRepository: ProductRepository,
     private val auditLogRepository: AuditLogRepository,
-    private val eventProducer: OrderEventProducer
+    private val kafkaProducer: KafkaProducer,
+    private val cacheService: CacheService
 ) {
-    suspend fun createOrder(userId: Int, request: OrderRequest): OrderResponse {
-        // Проверяем наличие товаров и резервируем
-        val items = mutableListOf<OrderItem>()
-        var total = BigDecimal.ZERO
 
-        for (itemReq in request.items) {
-            val product = productRepository.findById(itemReq.productId)
-                ?: throw IllegalArgumentException("Product not found: ${itemReq.productId}")
-            if (product.stock < itemReq.quantity) {
-                throw IllegalArgumentException("Insufficient stock for product: ${product.name}")
+    fun createOrder(userId: Long, request: CreateOrderRequest): Result<Order> = transaction {
+        try {
+            // Проверяем что все товары есть в наличии
+            for (item in request.items) {
+                val product = productRepository.findById(item.productId)
+                    ?: return@transaction Result.failure(Exception("Product ${item.productId} not found"))
+
+                if (product.stock < item.quantity) {
+                    return@transaction Result.failure(Exception("Not enough stock for product ${product.name}"))
+                }
             }
-            // Уменьшаем stock
-            val newStock = product.stock - itemReq.quantity
-            productRepository.updateStock(product.id!!, newStock)
 
-            val item = OrderItem(
-                productId = product.id,
-                quantity = itemReq.quantity,
-                price = product.price
+            // Списываем товары со склада
+            for (item in request.items) {
+                val success = productRepository.decreaseStock(item.productId, item.quantity)
+                if (!success) {
+                    return@transaction Result.failure(Exception("Failed to decrease stock"))
+                }
+                // Нужно сбросить кеш этого товара
+                cacheService.delete("product:${item.productId}")
+            }
+
+            // Сохраняем заказ
+            val order = orderRepository.create(userId, request.items)
+
+            // Пишем в audit log
+            auditLogRepository.log(
+                userId = userId,
+                action = "CREATE_ORDER",
+                entityType = "ORDER",
+                entityId = order.id,
+                details = "Created order with ${request.items.size} items, total: ${order.totalPrice}"
             )
-            items.add(item)
-            total += product.price * BigDecimal(itemReq.quantity)
+
+            // Кешируем заказ на 10 минут
+            cacheService.setJson("order:${order.id}", order, 600)
+
+            // Шлем событие в кафку
+            kafkaProducer.sendOrderEvent(
+                OrderEvent(
+                    orderId = order.id,
+                    userId = userId,
+                    eventType = "ORDER_CREATED",
+                    details = "Order created with total price ${order.totalPrice}"
+                )
+            )
+
+            Result.success(order)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-
-        // Создаём заказ
-        val order = Order(
-            userId = userId,
-            totalAmount = total,
-            status = OrderStatus.PENDING,
-            items = items
-        )
-        val createdOrder = orderRepository.create(order, items)
-
-        // Пишем в audit log
-        val audit = AuditLog(
-            userId = userId,
-            action = "CREATE_ORDER",
-            entityType = "ORDER",
-            entityId = createdOrder.id,
-            details = "Order created with total $total"
-        )
-        auditLogRepository.create(audit)
-
-        // Отправляем событие в Kafka
-        eventProducer.sendOrderCreated(createdOrder.id!!, userId, total)
-
-        return toResponse(createdOrder)
     }
 
-    suspend fun getUserOrders(userId: Int, limit: Int, offset: Int): List<OrderResponse> {
-        val orders = orderRepository.findByUser(userId, limit, offset)
-        return orders.map { toResponse(it) }
+    fun getOrder(id: Long, userId: Long): Order? {
+        // Сначала проверяем кеш
+        val cacheKey = "order:$id"
+        val cached = cacheService.get(cacheKey) { json ->
+            kotlinx.serialization.json.Json.decodeFromString<Order>(json)
+        }
+
+        if (cached != null) {
+            // Проверяем, что заказ принадлежит пользователю
+            if (cached.userId != userId) {
+                return null
+            }
+            return cached
+        }
+
+        // Не нашли в кеше - идем в базу
+        val order = orderRepository.findById(id) ?: return null
+
+        // Проверяем, что заказ принадлежит пользователю
+        if (order.userId != userId) {
+            return null
+        }
+
+        // Кешируем заказ на 10 минут
+        cacheService.setJson(cacheKey, order, 600)
+
+        return order
     }
 
-    suspend fun cancelOrder(orderId: Int, userId: Int, isAdmin: Boolean): Boolean {
-        val order = orderRepository.findById(orderId)
-            ?: throw IllegalArgumentException("Order not found")
-
-        // Проверяем права: пользователь может отменить только свой заказ, админ любой
-        if (!isAdmin && order.userId != userId) {
-            throw SecurityException("Access denied")
-        }
-
-        if (order.status != OrderStatus.PENDING) {
-            throw IllegalArgumentException("Only pending orders can be cancelled")
-        }
-
-        // Возвращаем товары на склад
-        for (item in order.items) {
-            val product = productRepository.findById(item.productId)
-                ?: continue
-            val newStock = product.stock + item.quantity
-            productRepository.updateStock(product.id!!, newStock)
-        }
-
-        val updated = orderRepository.updateStatus(orderId, OrderStatus.CANCELLED)
-
-        // Audit log
-        val audit = AuditLog(
-            userId = userId,
-            action = "CANCEL_ORDER",
-            entityType = "ORDER",
-            entityId = orderId,
-            details = "Order cancelled"
-        )
-        auditLogRepository.create(audit)
-
-        return updated
+    fun getUserOrders(userId: Long): List<Order> {
+        return orderRepository.findByUserId(userId)
     }
 
-    private suspend fun toResponse(order: Order): OrderResponse {
-        val items = order.items.map { item ->
-            val product = productRepository.findById(item.productId)
-            OrderItemResponse(
-                productId = item.productId,
-                productName = product?.name ?: "Unknown",
-                quantity = item.quantity,
-                price = item.price
+    fun cancelOrder(id: Long, userId: Long): Boolean = transaction {
+        val cancelled = orderRepository.cancel(id, userId)
+
+        if (cancelled) {
+            // Сохраняем в audit
+            auditLogRepository.log(
+                userId = userId,
+                action = "CANCEL_ORDER",
+                entityType = "ORDER",
+                entityId = id,
+                details = "Order cancelled by user"
+            )
+
+            // Удаляем из кеша
+            cacheService.delete("order:$id")
+
+            // Уведомляем через кафку
+            kafkaProducer.sendOrderEvent(
+                OrderEvent(
+                    orderId = id,
+                    userId = userId,
+                    eventType = "ORDER_CANCELLED",
+                    details = "Order cancelled"
+                )
             )
         }
-        return OrderResponse(
-            id = order.id!!,
-            status = order.status.name,
-            totalAmount = order.totalAmount,
-            items = items
-        )
+
+        cancelled
     }
 }
