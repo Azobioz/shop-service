@@ -12,6 +12,7 @@ import com.example.config.configureSerialization
 import com.example.config.configureSwagger
 import com.example.config.initializeData
 import com.example.kafka.KafkaConsumer
+import org.flywaydb.core.Flyway
 
 fun main() {
     embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
@@ -19,26 +20,41 @@ fun main() {
 }
 
 fun Application.module() {
+    // Конфигурация базы данных
     configureDatabase()
-    initializeData() // По умолчанию создаем админа при запуске
+
+    val dbUrl = System.getenv("DB_URL") ?: "jdbc:postgresql://localhost:5432/shop"
+    val dbUser = System.getenv("DB_USER") ?: "shop"
+    val dbPass = System.getenv("DB_PASSWORD") ?: "shop"
+
+    // Flyway миграции
+    Flyway.configure()
+        .dataSource(dbUrl, dbUser, dbPass)
+        .locations("classpath:db/migration") // путь к миграциям
+        .load()
+        .migrate()
+
+    // Инициализация данных (админ, тестовые записи и т.д.)
+    initializeData()
+
+    // Конфигурация Ktor
     configureSerialization()
     configureSecurity()
     configureMonitoring()
     configureSwagger()
     configureRouting()
 
-    // Запускаем Kafka consumer в фоновом режиме
-    val config = environment.config
+    // Запуск Kafka consumer в отдельном корутине
     val kafkaConsumer = KafkaConsumer(
-        bootstrapServers = System.getProperty("KAFKA_BOOTSTRAP_SERVERS") ?: System.getenv("KAFKA_BOOTSTRAP_SERVERS") ?: config.propertyOrNull("kafka.bootstrapServers")?.getString() ?: "localhost:9092",
-        topic = System.getProperty("KAFKA_TOPIC") ?: System.getenv("KAFKA_TOPIC") ?: config.propertyOrNull("kafka.topic")?.getString() ?: "order-events"
+        bootstrapServers = System.getenv("KAFKA_BOOTSTRAP_SERVERS") ?: "localhost:9092",
+        topic = System.getenv("KAFKA_TOPIC") ?: "order-events"
     )
 
     launch {
         kafkaConsumer.startConsuming()
     }
 
-    // Graceful shutdown
+    // Graceful shutdown Kafka consumer
     monitor.subscribe(ApplicationStopped) {
         kafkaConsumer.close()
     }

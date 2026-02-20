@@ -36,13 +36,12 @@ dependencies {
     implementation("org.postgresql:postgresql:42.7.4")
     implementation("com.zaxxer:HikariCP:6.2.1")
 
-    // Redis
-    implementation("io.lettuce:lettuce-core:6.5.1.RELEASE")
-
-
     // Flyway migrations
     implementation("org.flywaydb:flyway-core:10.10.0")
     implementation("org.flywaydb:flyway-database-postgresql:10.10.0")
+
+    // Redis
+    implementation("io.lettuce:lettuce-core:6.5.1.RELEASE")
 
     // Kafka
     implementation("org.apache.kafka:kafka-clients:3.9.0")
@@ -59,9 +58,6 @@ dependencies {
     // Config
     implementation("com.typesafe:config:1.4.3")
 
-    testImplementation("com.github.docker-java:docker-java-api:3.4.1")
-    testImplementation("com.github.docker-java:docker-java-transport-httpclient5:3.4.1")
-
     // Testing
     testImplementation(kotlin("test"))
     testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
@@ -71,6 +67,9 @@ dependencies {
     testImplementation("org.testcontainers:kafka:1.21.4")
     testImplementation("org.testcontainers:junit-jupiter:1.21.4")
     testImplementation("io.mockk:mockk:1.13.14")
+
+    testImplementation("com.github.docker-java:docker-java-api:3.4.1")
+    testImplementation("com.github.docker-java:docker-java-transport-httpclient5:3.4.1")
 }
 
 tasks.test {
@@ -91,8 +90,8 @@ ktor {
     }
 }
 
-tasks.named<Jar>("jar") {
-    manifest {
-        attributes["Main-Class"] = "com.example.ApplicationKt"
-    }
-}
+//tasks.named<Jar>("jar") {
+//    manifest {
+//        attributes["Main-Class"] = "com.example.ApplicationKt"
+//    }
+//}
