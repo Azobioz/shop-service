@@ -1,5 +1,14 @@
 package com.example.e2e
 
+import com.example.config.configureDatabase
+import com.example.config.configureMonitoring
+import com.example.config.configureRouting
+import com.example.config.configureSecurity
+import com.example.config.configureSerialization
+import com.example.config.configureSwagger
+import com.example.config.initializeData
+import io.ktor.server.application.Application
+import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.testcontainers.containers.GenericContainer
@@ -28,6 +37,26 @@ abstract class CoreE2ETest {
             withExposedPorts(6379)
         }
 
+        fun Application.moduleForTest() {
+            System.setProperty("DB_URL", postgres.jdbcUrl)
+            System.setProperty("DB_USER", postgres.username)
+            System.setProperty("DB_PASSWORD", postgres.password)
+
+            Flyway.configure()
+                .dataSource(postgres.jdbcUrl, postgres.username, postgres.password)
+                .locations("classpath:db/migration")
+                .load()
+                .migrate()
+
+            configureDatabase()
+            configureSerialization()
+            configureSecurity()
+            configureMonitoring()
+            configureSwagger()
+            configureRouting()
+            initializeData()
+        }
+
         @Container
         @JvmStatic
         val kafka = KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.5.0")).apply {
@@ -48,7 +77,7 @@ abstract class CoreE2ETest {
             System.setProperty("REDIS_PORT", redis.getMappedPort(6379).toString())
 
             // Настраиваем Kafka
-            System.setProperty("KAFKA_BOOTSTRAP_SERVERS", kafka.bootstrapServers)
+            System.getProperty("KAFKA_BOOTSTRAP_SERVERS") ?: kafka.bootstrapServers
 
             println("E2E Test infrastructure configured:")
             println("  PostgreSQL: ${postgres.jdbcUrl}")

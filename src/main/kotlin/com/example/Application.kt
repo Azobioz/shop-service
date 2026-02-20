@@ -23,14 +23,13 @@ fun Application.module() {
     // Конфигурация базы данных
     configureDatabase()
 
-    val dbUrl = System.getenv("DB_URL") ?: "jdbc:postgresql://localhost:5432/shop"
-    val dbUser = System.getenv("DB_USER") ?: "shop"
-    val dbPass = System.getenv("DB_PASSWORD") ?: "shop"
+    val dbUrl = System.getProperty("DB_URL") ?: System.getenv("DB_URL") ?: "jdbc:postgresql://localhost:5432/shop"
+    val dbUser = System.getProperty("DB_USER") ?: System.getenv("DB_USER") ?: "shop"
+    val dbPass = System.getProperty("DB_PASSWORD") ?: System.getenv("DB_PASSWORD") ?: "shop"
 
-    // Flyway миграции
     Flyway.configure()
         .dataSource(dbUrl, dbUser, dbPass)
-        .locations("classpath:db/migration") // путь к миграциям
+        .locations("classpath:db/migration")
         .load()
         .migrate()
 

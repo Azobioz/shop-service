@@ -33,7 +33,9 @@ class AuthE2ETest : CoreE2ETest() {
     @Test
     fun `should reject registration with short password`() = testApplication {
         application {
-            module()
+            System.setProperty("REDIS_HOST", redis.host)
+            System.setProperty("REDIS_PORT", redis.getMappedPort(6379).toString())
+            moduleForTest()
         }
 
         val randomEmail = "test${System.currentTimeMillis()}@example.com"
@@ -48,7 +50,9 @@ class AuthE2ETest : CoreE2ETest() {
     @Test
     fun `should login with valid credentials`() = testApplication {
         application {
-            module()
+            System.setProperty("REDIS_HOST", redis.host)
+            System.setProperty("REDIS_PORT", redis.getMappedPort(6379).toString())
+            moduleForTest()
         }
 
         val randomEmail = "login${System.currentTimeMillis()}@example.com"

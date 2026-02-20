@@ -14,7 +14,9 @@ class ProductE2ETest : CoreE2ETest() {
     @Test
     fun `should get all products`() = testApplication {
         application {
-            module()
+            System.setProperty("REDIS_HOST", redis.host)
+            System.setProperty("REDIS_PORT", redis.getMappedPort(6379).toString())
+            moduleForTest()
         }
 
         val response = client.get("/products")
@@ -28,7 +30,9 @@ class ProductE2ETest : CoreE2ETest() {
     @Test
     fun `should get product by id`() = testApplication {
         application {
-            module()
+            System.setProperty("REDIS_HOST", redis.host)
+            System.setProperty("REDIS_PORT", redis.getMappedPort(6379).toString())
+            moduleForTest()
         }
 
         val productsResponse = client.get("/products")
