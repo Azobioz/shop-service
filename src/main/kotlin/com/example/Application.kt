@@ -1,51 +1,45 @@
 package com.example
 
-import com.example.config.*
-import com.example.messaging.OrderEventConsumer
-import com.example.migrations.FlywayMigration
-import com.example.plugins.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.launch
+import com.example.config.configureDatabase
+import com.example.config.configureMonitoring
+import com.example.config.configureRouting
+import com.example.config.configureSecurity
+import com.example.config.configureSerialization
+import com.example.config.configureSwagger
+import com.example.config.initializeData
+import com.example.kafka.KafkaConsumer
 
 fun main() {
-    embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module).start(wait = true)
+    embeddedServer(Netty, port = 8080, host = "0.0.0.0", module = Application::module)
+        .start(wait = true)
 }
 
 fun Application.module() {
-    val appConfig = AppConfig.fromEnvironment()
-    val dbConfig = DatabaseConfig.fromEnvironment()
-    val redisConfig = RedisConfig.fromEnvironment()
-    val kafkaConfig = KafkaConfig.fromEnvironment()
-    val securityConfig = SecurityConfig.fromEnvironment()
+    configureDatabase()
+    initializeData() // По умолчанию создаем админа при запуске
+    configureSerialization()
+    configureSecurity()
+    configureMonitoring()
+    configureSwagger()
+    configureRouting()
 
-    FlywayMigration.migrate(dbConfig)
+    // Запускаем Kafka consumer в фоновом режиме
+    val config = environment.config
+    val kafkaConsumer = KafkaConsumer(
+        bootstrapServers = System.getProperty("KAFKA_BOOTSTRAP_SERVERS") ?: System.getenv("KAFKA_BOOTSTRAP_SERVERS") ?: config.propertyOrNull("kafka.bootstrapServers")?.getString() ?: "localhost:9092",
+        topic = System.getProperty("KAFKA_TOPIC") ?: System.getenv("KAFKA_TOPIC") ?: config.propertyOrNull("kafka.topic")?.getString() ?: "order-events"
+    )
 
-    val database = DatabaseFactory.connect(dbConfig)
-    val jedisPool = RedisFactory.createPool(redisConfig)
-    val kafkaProducer = KafkaFactory.createProducer(kafkaConfig)
-    val kafkaConsumer = KafkaFactory.createConsumer(kafkaConfig)
-
-    val consumerJob = CoroutineScope(Dispatchers.IO).launch {
-        OrderEventConsumer.consume(kafkaConsumer)
+    launch {
+        kafkaConsumer.startConsuming()
     }
 
-    configureSerialization()
-    configureMonitoring()
-    configureCORS()
-    configureStatusPages()
-    configureSecurity(securityConfig)
-    configureRouting(database, jedisPool, kafkaProducer, securityConfig)
-
-    configureSwagger()
-
-    environment.monitor.subscribe(ApplicationStopped) {
-        runBlocking {
-            consumerJob.cancelAndJoin()
-            kafkaProducer.close()
-            kafkaConsumer.close()
-            jedisPool.close()
-        }
+    // Graceful shutdown
+    monitor.subscribe(ApplicationStopped) {
+        kafkaConsumer.close()
     }
 }
